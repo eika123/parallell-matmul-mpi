@@ -1,0 +1,26 @@
+
+BasedOnStyle: Google
+
+UseTab: Never      # Use spaces instead of tabs for indentation
+IndentWidth: 4     # Set the indentation width to 4 spaces
+TabWidth: 4        # Set the tab width to 4 spaces (even if not using tabs, useful for alignment)
+
+
+#BreakBeforeBraces: Attach
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: true
+  AfterControlStatement: false
+
+BinPackArguments: false
+BinPackParameters: false
+ColumnLimit: 90 # Or your desired column limit
+
+SpaceAfterCStyleCast: true
+SpaceBeforeAssignmentOperators: true
+SpacesBeforeTrailingComments: 3
+
+IndentPPDirectives: AfterHash
+PointerAlignment: Right
+
+

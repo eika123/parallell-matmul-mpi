@@ -1,125 +1,42 @@
-#include <stdio.h>
 #include <math.h>
-#include <stdlib.h>
 #include <mpi.h>
+#include <stdio.h>
+#include <stdlib.h>
 
-#define SELECT_DATA_TYPE 2
-typedef enum number_types
-{
-    SHORT = 0,
-    INT,
-    FLOAT,
-    DOUBLE
-} NUMBER_TYPE;
+#include "matrix_common.h"
+#include "matrix_util.h"
 
-#if SELECT_DATA_TYPE == 0
-typedef short DATA_TYPE;
-#elif SELECT_DATA_TYPE == 1
-typedef int DATA_TYPE;
-#elif SELECT_DATA_TYPE == 2
-typedef float DATA_TYPE;
-#elif SELECT_DATA_TYPE == 3
-typedef double DATA_TYPE;
+#if SELECT_DATA_TYPE == SHORT
+#    define SELECT_DATA_TYPE_MPI MPI_SHORT
+#elif SELECT_DATA_TYPE == INT
+#    define SELECT_DATA_TYPE_MPI MPI_INT
+#elif SELECT_DATA_TYPE == FLOAT
+#    define SELECT_DATA_TYPE_MPI MPI_FLOAT
+#elif SELECT_DATA_TYPE == DOUBLE
+#    define SELECT_DATA_TYPE_MPI MPI_DOUBLE
 #endif
 
-// trickery: store matrix as a 1D array
-struct matrix
+inline void sanitize_serial_matvecmul_input(matrix_t *mat,
+                                            matrix_t *vec,
+                                            matrix_t *result)
 {
-    int numRows; // height of column = the number of rows
-    int numCols; // lenght of rows = the number of columsn
-    DATA_TYPE *data;
-} typedef matrix_t;
-
-matrix_t *matrix_factory(int m, int n)
-{
-    matrix_t *matrix = malloc(sizeof(matrix_t));
-    if (!matrix)
-    {
-        fprintf(stderr, "malloc failed\n");
+    if (!mat || !vec || !result) {
+        fprintf(stderr,
+                "serial_matvecmul expects args to be not NULL, received "
+                "mat=%p, vec=%p, result=%p\n",
+                mat,
+                vec,
+                result);
         exit(1);
     }
-    matrix->numRows = m;
-    matrix->numCols = n;
-    matrix->data = calloc((size_t)m * (size_t)n, sizeof(DATA_TYPE));
-    if (!matrix->data)
-    {
-        fprintf(stderr, "calloc failed\n");
-        free(matrix);
-    }
-    return matrix;
-}
-
-#define get_val(matrix, row, col) ((matrix->data)[row * (matrix->numCols) + col])
-#define set_val(matrix, row, col, value) ((matrix->data)[row * (matrix->numCols) + col] = (DATA_TYPE)value)
-
-void raw_pprint_matrix(matrix_t *A, char *row_container_left, char *row_container_right, char *elem_delim, char *outer_container_left, char *outer_container_right)
-{
-    int N = A->numRows, M = A->numCols, i = 0, j = 0;
-    if (outer_container_left) {
-        printf("%s\n", outer_container_left);
-    }
-    for (int i = 0; i < N; i++)
-    {
-        printf("%s", row_container_left);
-        for (j = 0; j < M; j++)
-        {
-            switch (SELECT_DATA_TYPE)
-            {
-            case SHORT:
-                printf(" %8hd", (short)get_val(A, i, j));
-                break;
-            case INT:
-                printf(" %8d", (int)get_val(A, i, j));
-                break;
-            case FLOAT:
-                printf(" %8.4f", (float)get_val(A, i, j));
-                break;
-            case DOUBLE:
-                printf(" %8.4f", (double)get_val(A, i, j));
-                break;
-            default:
-                break;
-            }
-            if (elem_delim && j < M - 1)
-            {
-                printf("%s", elem_delim);
-            }
-        }
-        printf(" %s\n", row_container_right);
-    }
-    if (outer_container_right) {
-        printf("%s", outer_container_right);
-    }
-}
-
-void pprint_matrix(matrix_t *A)
-{
-    raw_pprint_matrix(A, "|", "|", NULL, NULL, NULL);
-}
-
-void python_pprint_matrix(matrix_t *A)
-{
-    raw_pprint_matrix(A, "[", "],", ",", "[", "]");
-}
-
-inline void sanitize_serial_matvecmul_input(matrix_t *mat, matrix_t *vec, matrix_t *result)
-{
-    if (!mat || !vec || !result)
-    {
-        fprintf(stderr, "serial_matvecmul expects args to be not NULL, received "
-                        "mat=%p, vec=%p, result=%p\n",
-                mat, vec, result);
-        exit(1);
-    }
-    if (vec->numCols != 1)
-    {
+    if (vec->numCols != 1) {
         fprintf(stderr, "serial_matvecmul expects vector to have one column only");
         exit(1);
     }
-    if (vec->numRows != mat->numCols)
-    {
-        fprintf(stderr, "matrix and vector dimensions mismatch for multiplication, "
-                        "matrix has %d columns, vector has %d rows\n",
+    if (vec->numRows != mat->numCols) {
+        fprintf(stderr,
+                "matrix and vector dimensions mismatch for multiplication, "
+                "matrix has %d columns, vector has %d rows\n",
                 vec->numRows,
                 mat->numCols);
         exit(1);
@@ -131,47 +48,72 @@ int serial_matvecmul(matrix_t *mat, matrix_t *vec, matrix_t *result)
     sanitize_serial_matvecmul_input(mat, vec, result);
     int M = mat->numRows, N = mat->numCols;
     DATA_TYPE mres;
-    for (int row = 0; row < M; row++)
-    {
-        mres = (DATA_TYPE)0;
-        for (int col = 0; col < N; col++)
-        {
+    for (int row = 0; row < M; row++) {
+        mres = (DATA_TYPE) 0;
+        for (int col = 0; col < N; col++) {
             mres += get_val(mat, row, col) * get_val(vec, col, 0);
         }
         set_val(result, row, 0, mres);
     }
 }
 
-void populate_vector_constants(matrix_t *vec, DATA_TYPE val)
+/**
+ * @brief
+ *
+ * @param send_matrix: matrix_t pointer to matrix that is to be scattered
+ * @param sendcounts: (Root only) Array where sendcounts[i] is the number of elements to
+ *  send to process i.
+ * @param dspls: (Root only) Array where displs[i] is the offset from the beginning of
+ *  sendbuf for data intended for process i
+ * @param recv_matrix
+ * @param root
+ * @param comm MPI_Comm communicator in which to scatter the send_matrix
+ * @return int
+ */
+int scatterv_matrix_mpi(matrix_t *send_matrix,
+                        const int sendcounts[],
+                        const int dspls[],
+                        matrix_t *recv_matrix,
+                        int root,
+                        MPI_Comm comm)
 {
-    int M = vec->numRows;
+    // rank is specific to communicator
+    int comm_size, rank;
+    MPI_Comm_size(comm, &comm_size);
+    MPI_Comm_rank(comm, &rank);
 
-    for (int row = 0; row < M; row++)
-    {
-        set_val(vec, row, 0, val);
+    if (rank == root && send_matrix == NULL) {
+        fprintf(stderr, "Rank[%d]: root sender received NULL as send_matrix\n", rank);
+        exit(1);
     }
+
+    DATA_TYPE *sendbuf = rank == root ? (DATA_TYPE *) send_matrix->data : NULL;
+
+    int recv_count = (recv_matrix->numRows) * (recv_matrix->numCols);
+    MPI_Scatterv(send_matrix->data,
+                 sendcounts,
+                 dspls,
+                 SELECT_DATA_TYPE_MPI,
+                 recv_matrix->data,
+                 recv_count,
+                 SELECT_DATA_TYPE_MPI,
+                 root,
+                 comm);
 }
 
-void populate_vector_random(matrix_t *vec, int range)
+/**
+ * Wrapper for gathering a matrix with MPI using MPI_Gatherv
+ */
+int gatherv_matrix_mpi(const matrix_t *send_matrix,
+                       int sendcount,
+                       matrix_t *recv_matrix,
+                       const int recvcount[],
+                       const int displs[],
+                       int root,
+                       MPI_Comm comm,
+                       MPI_Request *request)
 {
-    int M = vec->numRows;
-
-    for (int row = 0; row < M; row++)
-    {
-        set_val(vec, row, 0, (DATA_TYPE)(rand() % range));
-    }
-}
-
-void populate_matrix_random(matrix_t *mat, int range)
-{
-    int M = mat->numRows, N = mat->numCols;
-    for (int row = 0; row < M; row++)
-    {
-        for (int col = 0; col < N; col++)
-        {
-            set_val(mat, row, col, (DATA_TYPE)(rand() % range));
-        }
-    }
+    return 0;
 }
 
 int main(int argc, char *argv[])
@@ -192,4 +134,6 @@ int main(int argc, char *argv[])
     printf("\n");
     printf("\n");
     python_pprint_matrix(res);
+
+    return 0;
 }

@@ -17,14 +17,14 @@
  */
 void raw_pprint_matrix(matrix_t *A, char *row_container_left, char *row_container_right, char *elem_delim, char *outer_container_left, char *outer_container_right)
 {
-    int N = A->numRows, M = A->numCols, i = 0, j = 0;
+    int M = A->numRows, N = A->numCols, i = 0, j = 0;
     if (outer_container_left) {
         printf("%s\n", outer_container_left);
     }
-    for (int i = 0; i < N; i++)
+    for (int i = 0; i < M; i++)
     {
         printf("%s", row_container_left);
-        for (j = 0; j < M; j++)
+        for (j = 0; j < N; j++)
         {
             switch (SELECT_DATA_TYPE)
             {

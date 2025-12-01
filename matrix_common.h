@@ -4,7 +4,7 @@
 #ifndef MAT_COMMON_H
 #define MAT_COMMON_H
 
-#define SELECT_DATA_TYPE 2
+#define SELECT_DATA_TYPE 1
 
 // enums only work compile time
 #define SHORT 0
@@ -36,6 +36,7 @@ struct matrix
 
 
 matrix_t *matrix_factory(int m, int n);
+void matrix_destroy(matrix_t *matrix);
 
 void populate_vector_constants(matrix_t *vec, DATA_TYPE val);
 void populate_vector_random(matrix_t *vec, int range);

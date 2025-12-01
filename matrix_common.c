@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include "matrix_common.h"
 
-matrix_t *matrix_factory(int m, int n)
+matrix_t *matrix_factory(int numRows, int numCols)
 {
     matrix_t *matrix = malloc(sizeof(matrix_t));
     if (!matrix)
@@ -10,15 +10,28 @@ matrix_t *matrix_factory(int m, int n)
         fprintf(stderr, "malloc failed\n");
         exit(1);
     }
-    matrix->numRows = m;
-    matrix->numCols = n;
-    matrix->data = calloc((size_t)m * (size_t)n, sizeof(DATA_TYPE));
+    matrix->numRows = numRows;
+    matrix->numCols = numCols;
+    matrix->data = calloc((size_t)numRows * (size_t)numCols, sizeof(DATA_TYPE));
     if (!matrix->data)
     {
         fprintf(stderr, "calloc failed\n");
         free(matrix);
     }
     return matrix;
+}
+
+void matrix_destroy(matrix_t *matrix) {
+    if (matrix == NULL) {
+        fprintf(stderr, "matrix_common::matrix_destroy: expected argument matrix to be not NULL\n");
+        exit(1);
+    }
+    if (matrix -> data == NULL) {
+        fprintf(stderr, "matrix_common::matrix_destroy: expected argument matrix to have not NULL data field\n");
+        exit(1);
+    }
+    free(matrix->data);
+    free(matrix);
 }
 
 

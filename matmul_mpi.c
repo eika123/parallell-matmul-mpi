@@ -315,8 +315,6 @@ void allocate_receive_matrix(const int rank,
 }
 
 
-
-
 int main(int argc, char *argv[])
 {
     int world_size, my_rank;
@@ -324,7 +322,7 @@ int main(int argc, char *argv[])
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
-    int M = 4817, N = M;
+    int M = 30000, N = M;
 
     matrix_t *send_matrix = NULL, *vector = NULL, *local_result_vector = NULL,
              *result_vector = NULL;
@@ -385,7 +383,7 @@ int main(int argc, char *argv[])
         // normalize for next iteration
         total_sum_squares = vector_sum_component_squares(vector);
         vector_norm = (DATA_TYPE) sqrt(total_sum_squares);
-        printf("Rank[%d]: total_sum_squares=%f  ---- vector_norm=%f\n", my_rank, total_sum_squares, vector_norm);
+        // printf("Rank[%d]: total_sum_squares=%f  ---- vector_norm=%f\n", my_rank, total_sum_squares, vector_norm);
         vecdivide_scalar(vector, vector_norm);
     }
 

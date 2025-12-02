@@ -4,7 +4,7 @@
 #ifndef MAT_COMMON_H
 #define MAT_COMMON_H
 
-#define SELECT_DATA_TYPE 1
+#define SELECT_DATA_TYPE 2
 
 // enums only work compile time
 #define SHORT 0
@@ -31,7 +31,7 @@ struct matrix
     DATA_TYPE *data;
 } typedef matrix_t;
 
-#define get_val(matrix, row, col) ((DATA_TYPE) (matrix->data)[row * (matrix->numCols) + col])
+#define get_val(matrix, row, col) ((matrix->data)[row * (matrix->numCols) + col])
 #define set_val(matrix, row, col, value) ((matrix->data)[row * (matrix->numCols) + col] = (DATA_TYPE)value)
 
 
@@ -41,6 +41,9 @@ void matrix_destroy(matrix_t *matrix);
 void populate_vector_constants(matrix_t *vec, DATA_TYPE val);
 void populate_vector_random(matrix_t *vec, int range);
 void populate_matrix_random(matrix_t *mat, int range);
+
+void vecmul_scalar(matrix_t *vector, DATA_TYPE scalar_value);
+void vecdivide_scalar(matrix_t *vector, DATA_TYPE scalar_value);
 
 
 #endif

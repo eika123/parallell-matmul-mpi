@@ -21,24 +21,24 @@ inline void sanitize_serial_matvecmul_input(matrix_t *mat,
                                             matrix_t *result)
 {
     if (!mat || !vec || !result) {
-        fprintf(stderr,
-                "serial_matvecmul expects args to be not NULL, received "
-                "mat=%p, vec=%p, result=%p\n",
-                mat,
-                vec,
-                result);
+        printf(
+            "serial_matvecmul expects args to be not NULL, received "
+            "mat=%p, vec=%p, result=%p\n",
+            mat,
+            vec,
+            result);
         exit(1);
     }
     if (vec->numCols != 1) {
-        fprintf(stderr, "serial_matvecmul expects vector to have one column only");
+        printf("serial_matvecmul expects vector to have one column only");
         exit(1);
     }
     if (vec->numRows != mat->numCols) {
-        fprintf(stderr,
-                "matrix and vector dimensions mismatch for multiplication, "
-                "matrix has %d columns, vector has %d rows\n",
-                vec->numRows,
-                mat->numCols);
+        printf(
+            "matrix and vector dimensions mismatch for multiplication, "
+            "matrix has %d columns, vector has %d rows\n",
+            vec->numRows,
+            mat->numCols);
         exit(1);
     }
 }
@@ -69,9 +69,10 @@ DATA_TYPE vector_sum_component_squares(matrix_t *vector)
     return sum_squares;
 }
 
-DATA_TYPE total_sum_squares(int sum_squares_components[], int length) {
+DATA_TYPE total_sum_squares(int sum_squares_components[], int length)
+{
     DATA_TYPE sum_squares = 0;
-    for (int i=0; i < length; i++) {
+    for (int i = 0; i < length; i++) {
         sum_squares += (sum_squares_components[i]) * (sum_squares_components[i]);
     }
     return sum_squares;
@@ -87,18 +88,15 @@ DATA_TYPE total_sum_squares(int sum_squares_components[], int length) {
  * @param displacements
  * @param comm_size
  */
-inline void plan_even_distribution(matrix_t *send_matrix,
-                                   matrix_t *recv_matrix,
-                                   int sendcounts[],
+inline void plan_even_distribution(int numRows,
+                                   int numCols,
+                                   int counts[],
                                    int displacements[],
                                    int comm_size)
 {
-    int M = send_matrix->numRows, N = send_matrix->numCols;
-    int snd_cnt = (M / comm_size) * N;
-
     for (int rnk = 0; rnk < comm_size; rnk++) {
-        sendcounts[rnk] = (M / comm_size) * N;
-        displacements[rnk] = rnk * (M / comm_size) * N;
+        counts[rnk] = (numRows / comm_size) * numCols;
+        displacements[rnk] = rnk * (numRows / comm_size) * numCols;
     }
 }
 
@@ -131,11 +129,16 @@ int scatterv_matrix_mpi(matrix_t *send_matrix,
         fprintf(stderr, "Rank[%d]: root sender received NULL as send_matrix\n", rank);
         exit(1);
     }
+
+    void *send_data;
+    if (rank != root && send_matrix == NULL) {
+        send_data = NULL;
+    } else {
+        send_data = send_matrix->data;
+    }
     int recv_count = (recv_matrix->numRows) * (recv_matrix->numCols);
 
-    DATA_TYPE *sendbuf = rank == root ? (DATA_TYPE *) send_matrix->data : NULL;
-
-    MPI_Scatterv(send_matrix->data,
+    MPI_Scatterv(send_data,
                  sendcounts,
                  displacements,
                  SELECT_DATA_TYPE_MPI,
@@ -311,6 +314,9 @@ void allocate_receive_matrix(const int rank,
     }
 }
 
+
+
+
 int main(int argc, char *argv[])
 {
     int world_size, my_rank;
@@ -318,103 +324,76 @@ int main(int argc, char *argv[])
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
-    int M = 18, N = 7;
+    int M = 4817, N = M;
 
-    matrix_t *send_matrix = NULL, *vector = NULL, *result_vector;
-    int *sendcounts = NULL, *displacements = NULL;
-    DATA_TYPE *vector_norm_contributions = calloc(world_size, sizeof(DATA_TYPE));
+    matrix_t *send_matrix = NULL, *vector = NULL, *local_result_vector = NULL,
+             *result_vector = NULL;
+    int *counts = NULL, *displacements = NULL;
 
     matrix_t *recv_matrix, *recv_vector;
     vector = matrix_factory(N, 1);
+    result_vector = matrix_factory(N, 1);
     allocate_receive_matrix(my_rank, world_size, &recv_matrix, M, N);
     allocate_receive_matrix(my_rank, world_size, &recv_vector, M, 1);
-    allocate_receive_matrix(my_rank, world_size, &result_vector, M, 1);
+    allocate_receive_matrix(my_rank, world_size, &local_result_vector, M, 1);
+    printf("Rank[%d]: vector.shape = %dx%d\n", my_rank, vector->numRows, vector->numCols);
+    printf("Rank[%d]: local_result_vector.shape = %dx%d\n",
+           my_rank,
+           local_result_vector->numRows,
+           local_result_vector->numCols);
 
+    displacements = calloc(world_size, sizeof(int));
+    counts = calloc(world_size, sizeof(int));
     if (my_rank == 0) {
         send_matrix = matrix_factory(M, N);
 
         populate_matrix_random(send_matrix, 5);
         populate_vector_random(vector, 4);
 
-        sendcounts = calloc(world_size, sizeof(int));
-        displacements = calloc(world_size, sizeof(int));
 
         plan_even_distribution(
-            send_matrix, recv_matrix, sendcounts, displacements, world_size);
-        sendcounts[world_size - 1] += M % world_size;
+            send_matrix->numRows, send_matrix->numCols, counts, displacements, world_size);
+        counts[world_size - 1] += M % world_size;
         scatterv_matrix_mpi_world(
-            send_matrix, sendcounts, displacements, recv_matrix, my_rank, 0, world_size);
+            send_matrix, counts, displacements, recv_matrix, my_rank, 0, world_size);
 
     } else {
         scatterv_matrix_mpi_world(
-            send_matrix, sendcounts, displacements, recv_matrix, my_rank, 0, world_size);
+            send_matrix, counts, displacements, recv_matrix, my_rank, 0, world_size);
     }
 
     MPI_Bcast(vector->data, vector->numRows, SELECT_DATA_TYPE_MPI, 0, MPI_COMM_WORLD);
-    serial_matvecmul(recv_matrix, vector, result_vector);
-    vector_norm_contributions[my_rank] = vector_sum_component_squares(result_vector);
+    DATA_TYPE vector_norm;
+    DATA_TYPE total_sum_squares;
 
-    MPI_Allgather((vector_norm_contributions + my_rank),
-                  1,
-                  SELECT_DATA_TYPE_MPI,
-                  vector_norm_contributions,
-                  world_size,
-                  SELECT_DATA_TYPE_MPI,
-                  MPI_COMM_WORLD);
+    // power iteration --> vector approaches eigenvector with largest eigenvalue
+    for (int k; k < 1000; k++) {
+        serial_matvecmul(recv_matrix, vector, local_result_vector);
 
-    DATA_TYPE total_squares = total_sum_squares(vector_norm_contributions, world_size);
-    printf("Rank[%d]: total_squares=%d\n", my_rank, total_squares);
-    
+        plan_even_distribution(N, 1, counts, displacements, world_size);
+        counts[world_size - 1] += N % world_size;
 
-    // MPI_Allgather(result_vector->data,
-    //               result_vector->numRows,
-    //               SELECT_DATA_TYPE_MPI,
-    //               vector->data,
-    //               vector->numRows,
-    //               SELECT_DATA_TYPE_MPI,
-    //               MPI_COMM_WORLD);
-
-    // printf("Rank[%d]: result_vector_length=%d ... result sum squares=%d\n",
-    //        my_rank,
-    //        result_vector->numRows,
-    //        vector_norm_contributions[my_rank]);
-
-    // MPI_Barrier(MPI_COMM_WORLD);
-    //  if (my_rank == 0) {
-    //      printf("Rank[%d]: M / world_size=%d\n", my_rank, world_size);
-    //      pprint_matrix(vector);
-    //      printf("\n\n");
-    //  }
-    //  MPI_Barrier(MPI_COMM_WORLD);
-    //  if (my_rank == 1) {
-    //      printf("Rank[%d]: M / world_size=%d\n", my_rank, world_size);
-    //      pprint_matrix(vector);
-    //      printf("\n\n");
-    //  }
-    //  MPI_Barrier(MPI_COMM_WORLD);
-    //  if (my_rank == 2) {
-    //      printf("Rank[%d]: M / world_size=%d\n", my_rank, world_size);
-    //      pprint_matrix(vector);
-    //      printf("\n\n");
-    //  }
-    //  MPI_Barrier(MPI_COMM_WORLD);
-    //  if (my_rank == 3) {
-    //      printf("Rank[%d]: M / world_size=%d\n", my_rank, world_size);
-    //      pprint_matrix(recv_matrix);
-    //      printf("\n");
-    //  }
-
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // if (my_rank == 0) {
-    //     printf("\n\n\n ============= send_matrix ============ :\n");
-    //     pprint_matrix(send_matrix);
-    // }
+        MPI_Allgatherv(local_result_vector->data,
+                    local_result_vector->numRows,
+                    SELECT_DATA_TYPE_MPI,
+                    vector->data,
+                    counts,
+                    displacements,
+                    SELECT_DATA_TYPE_MPI,
+                    MPI_COMM_WORLD);
+        
+        // normalize for next iteration
+        total_sum_squares = vector_sum_component_squares(vector);
+        vector_norm = (DATA_TYPE) sqrt(total_sum_squares);
+        printf("Rank[%d]: total_sum_squares=%f  ---- vector_norm=%f\n", my_rank, total_sum_squares, vector_norm);
+        vecdivide_scalar(vector, vector_norm);
+    }
 
 done:
     MPI_Finalize();
 
-    // matrix_destroy(vector);
-    // matrix_destroy(recv_matrix);
+    matrix_destroy(vector);
+    matrix_destroy(recv_matrix);
     if (my_rank == 0) {
         matrix_destroy(send_matrix);
     }

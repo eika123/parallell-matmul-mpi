@@ -53,43 +53,52 @@ int serial_matvecmul(matrix_t *mat, matrix_t *vec, matrix_t *result)
         for (int col = 0; col < N; col++) {
             mres += get_val(mat, row, col) * get_val(vec, col, 0);
         }
-        set_val(result, row, 0, mres);
+        result->data[row] = mres;
     }
 }
 
-inline void plan_even_distribution(matrix_t *send_matrix, matrix_t *recv_matrix, int sendcounts[], int displacements[], int comm_size) {
-
-    int M = send_matrix -> numRows, N = send_matrix -> numCols;
-    int snd_cnt = (M / comm_size) * N;
-
-    for (int rnk=0; rnk<comm_size; rnk++) {
-        sendcounts[rnk] = (M/comm_size) * N;
-        displacements[rnk] = rnk*(M/comm_size)*N;
+DATA_TYPE vector_sum_component_squares(matrix_t *vector)
+{
+    int M = vector->numRows;
+    DATA_TYPE sum_squares = (DATA_TYPE) 0;
+    DATA_TYPE component;
+    for (int i = 0; i < M; i++) {
+        component = vector->data[i];
+        sum_squares += component * component;
     }
+    return sum_squares;
+}
+
+DATA_TYPE total_sum_squares(int sum_squares_components[], int length) {
+    DATA_TYPE sum_squares = 0;
+    for (int i=0; i < length; i++) {
+        sum_squares += (sum_squares_components[i]) * (sum_squares_components[i]);
+    }
+    return sum_squares;
 }
 
 /**
- * @brief Helper for scatter functions. Calculates how much to send to each process in a communicator of comm_size,
- *        and stores the information in sendcounts and displacements. See @see MPI_Scatterv
- * 
- * @param send_matrix 
- * @param sendcounts 
- * @param displacements 
- * @param comm_size 
+ * @brief Helper for scatter functions. Calculates how much to send to each process in a
+ * communicator of comm_size, and stores the information in sendcounts and displacements.
+ * See @see MPI_Scatterv
+ *
+ * @param send_matrix
+ * @param sendcounts
+ * @param displacements
+ * @param comm_size
  */
-inline void plan_distribution(matrix_t *send_matrix, matrix_t *recv_matrix, int sendcounts[], int displacements[], int comm_size) {
-    int M = send_matrix -> numRows, N = send_matrix -> numCols;
+inline void plan_even_distribution(matrix_t *send_matrix,
+                                   matrix_t *recv_matrix,
+                                   int sendcounts[],
+                                   int displacements[],
+                                   int comm_size)
+{
+    int M = send_matrix->numRows, N = send_matrix->numCols;
     int snd_cnt = (M / comm_size) * N;
-    int rest_snd_cnt = (M % comm_size) * N;
 
-    for (int rnk=0; rnk<comm_size; rnk++) {
-        sendcounts[rnk] = (M/comm_size) * N;
-        displacements[rnk] = rnk*(M/comm_size)*N;
-    }
-    sendcounts[comm_size - 1] += rest_snd_cnt;
-    printf("sendcounts and displacements:\n");
-    for (int i = 0; i < comm_size; i++) {
-        printf("sendcounts[%d] = %2d    ..... displacements[%d] = %3d\n", i, sendcounts[i], i, displacements[i]);
+    for (int rnk = 0; rnk < comm_size; rnk++) {
+        sendcounts[rnk] = (M / comm_size) * N;
+        displacements[rnk] = rnk * (M / comm_size) * N;
     }
 }
 
@@ -117,7 +126,6 @@ int scatterv_matrix_mpi(matrix_t *send_matrix,
     int comm_size, rank;
     MPI_Comm_size(comm, &comm_size);
     MPI_Comm_rank(comm, &rank);
-
 
     if (rank == root && send_matrix == NULL) {
         fprintf(stderr, "Rank[%d]: root sender received NULL as send_matrix\n", rank);
@@ -152,22 +160,32 @@ int scatterv_matrix_mpi(matrix_t *send_matrix,
  * @return int
  */
 int scatterv_matrix_mpi_world(matrix_t *send_matrix,
-                        int sendcounts[],
-                        int displacements[],
-                        matrix_t *recv_matrix,
-                        const int rank,
-                        const int root,
-                        const int world_size)
+                              int sendcounts[],
+                              int displacements[],
+                              matrix_t *recv_matrix,
+                              const int rank,
+                              const int root,
+                              const int world_size)
 {
-
     if (rank == root && send_matrix == NULL) {
         fprintf(stderr, "Rank[%d]: root sender received NULL as send_matrix\n", rank);
         exit(1);
     }
+    if (recv_matrix == NULL) {
+        printf("Rank[%d]: expected recv_matrix to be not NULL\n", rank);
+        exit(1);
+    }
+
+    void *send_data;
+    if (rank != root && send_matrix == NULL) {
+        send_data = NULL;
+    } else {
+        send_data = send_matrix->data;
+    }
     int recv_count = (recv_matrix->numRows) * (recv_matrix->numCols);
 
     DATA_TYPE *sendbuf = rank == root ? (DATA_TYPE *) send_matrix->data : NULL;
-    MPI_Scatterv(send_matrix->data,
+    MPI_Scatterv(send_data,
                  sendcounts,
                  displacements,
                  SELECT_DATA_TYPE_MPI,
@@ -178,26 +196,89 @@ int scatterv_matrix_mpi_world(matrix_t *send_matrix,
                  MPI_COMM_WORLD);
 }
 
-
+inline void gatherv_matrix_mpi_world_sanitize_input(matrix_t *recv_matrix,
+                                                    int sendcount,
+                                                    const matrix_t *send_matrix,
+                                                    const int recvcounts[],
+                                                    const int recv_displacements[],
+                                                    int rank,
+                                                    int root,
+                                                    MPI_Comm comm)
+{
+    if (rank == root && recvcounts == NULL) {
+        fprintf(stderr,
+                "Rank[%d]: matmul_mpi::gatherv_matrix_mpi_world: root process expected "
+                "recvcounts to be not NULL\n",
+                rank);
+        exit(1);
+    }
+    if (rank == root && recv_displacements == NULL) {
+        fprintf(stderr,
+                "Rank[%d]: matmul_mpi::gatherv_matrix_mpi_world: root process expected "
+                "recv_displacements to be not NULL\n",
+                rank);
+        exit(1);
+    }
+    if (rank == root && recv_matrix == NULL) {
+        fprintf(stderr,
+                "Rank[%d]: matmul_mpi::gatherv_matrix_mpi_world: root process expected "
+                "recv_matrix to be not NULL\n",
+                rank);
+        exit(1);
+    }
+    if (send_matrix == NULL) {
+        fprintf(stderr,
+                "Rank[%d]: matmul_mpi::gatherv_matrix_mpi_world: expected send_matrix to "
+                "be not NULL\n",
+                rank);
+        exit(1);
+    }
+}
 
 /**
- * Wrapper for gathering a matrix with MPI using MPI_Gatherv
+ * @brief
+ *
+ * @param send_matrix The matrix to send
+ * @param sendcount The number of elements in the send buffer send_matrix->data
+ * @param recv_matrix
+ * @param recvcount
+ * @param displs
+ * @param root
+ * @param comm
+ * @param request
+ * @return int
  */
-int gatherv_matrix_mpi(const matrix_t *send_matrix,
-                       int sendcount,
-                       matrix_t *recv_matrix,
-                       const int recvcount[],
-                       const int displs[],
-                       int root,
-                       MPI_Comm comm,
-                       MPI_Request *request)
+int gatherv_matrix_mpi_world(matrix_t *recv_matrix,
+                             int sendcount,
+                             const matrix_t *send_matrix,
+                             const int recvcounts[],
+                             const int recv_displacements[],
+                             int rank,
+                             int root,
+                             MPI_Comm comm)
 {
+    gatherv_matrix_mpi_world_sanitize_input(recv_matrix,
+                                            sendcount,
+                                            send_matrix,
+                                            recvcounts,
+                                            recv_displacements,
+                                            rank,
+                                            root,
+                                            comm);
+    MPI_Gatherv(send_matrix->data,
+                sendcount,
+                SELECT_DATA_TYPE_MPI,
+                recv_matrix->data,
+                recvcounts,
+                recv_displacements,
+                SELECT_DATA_TYPE_MPI,
+                root,
+                MPI_COMM_WORLD);
     return 0;
 }
 
-
-
-void simple_check() {
+void simple_check()
+{
     matrix_t *mat = matrix_factory(20, 10);
     matrix_t *vec = matrix_factory(10, 1);
     matrix_t *res = matrix_factory(20, 1);
@@ -216,6 +297,20 @@ void simple_check() {
     python_pprint_matrix(res);
 }
 
+void allocate_receive_matrix(const int rank,
+                             const int comm_size,
+                             matrix_t **recv_matrix,
+                             int send_matrix_num_rows,
+                             int send_matrix_num_cols)
+{
+    int M = send_matrix_num_rows, N = send_matrix_num_cols;
+    if (rank == comm_size - 1) {
+        *recv_matrix = matrix_factory(M / comm_size + (M % comm_size), N);
+    } else {
+        *recv_matrix = matrix_factory(M / comm_size, N);
+    }
+}
+
 int main(int argc, char *argv[])
 {
     int world_size, my_rank;
@@ -223,68 +318,106 @@ int main(int argc, char *argv[])
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
-    int M = 21, N = 12;
+    int M = 18, N = 7;
 
-    matrix_t *send_matrix = matrix_factory(M, N);
-    matrix_t *vec = matrix_factory(N, 1);
-    matrix_t *res = matrix_factory(M, 1);
+    matrix_t *send_matrix = NULL, *vector = NULL, *result_vector;
+    int *sendcounts = NULL, *displacements = NULL;
+    DATA_TYPE *vector_norm_contributions = calloc(world_size, sizeof(DATA_TYPE));
 
-    populate_matrix_random(send_matrix, 100);
-    populate_vector_random(vec, 20);
+    matrix_t *recv_matrix, *recv_vector;
+    vector = matrix_factory(N, 1);
+    allocate_receive_matrix(my_rank, world_size, &recv_matrix, M, N);
+    allocate_receive_matrix(my_rank, world_size, &recv_vector, M, 1);
+    allocate_receive_matrix(my_rank, world_size, &result_vector, M, 1);
 
-    int *sendcounts = calloc(world_size, sizeof(int));
-    int *displacements = calloc(world_size, sizeof(int));
+    if (my_rank == 0) {
+        send_matrix = matrix_factory(M, N);
 
-    matrix_t *recv_matrix;
-    if (my_rank == world_size - 1) {
-        //printf("Rank[%d]: making extra large receive matrix of size %d x %d\n", my_rank, M / world_size + (M % world_size), N);
-        recv_matrix = matrix_factory(M / world_size + (M % world_size), N);
+        populate_matrix_random(send_matrix, 5);
+        populate_vector_random(vector, 4);
+
+        sendcounts = calloc(world_size, sizeof(int));
+        displacements = calloc(world_size, sizeof(int));
+
+        plan_even_distribution(
+            send_matrix, recv_matrix, sendcounts, displacements, world_size);
+        sendcounts[world_size - 1] += M % world_size;
+        scatterv_matrix_mpi_world(
+            send_matrix, sendcounts, displacements, recv_matrix, my_rank, 0, world_size);
+
     } else {
-        //printf("Rank[%d]: making receive matrix of size %d x %d\n", my_rank,  M / world_size , N);
-        recv_matrix = matrix_factory(M / world_size, N);
+        scatterv_matrix_mpi_world(
+            send_matrix, sendcounts, displacements, recv_matrix, my_rank, 0, world_size);
     }
-    plan_even_distribution(send_matrix, recv_matrix, sendcounts, displacements, world_size);
-    sendcounts[world_size - 1] += M % world_size;
-    scatterv_matrix_mpi_world(send_matrix, sendcounts, displacements, recv_matrix, my_rank, 0, world_size);
 
-    MPI_Barrier(MPI_COMM_WORLD);
-    if (my_rank==0) {
-        printf("Rank[%d]: M / world_size=%d\n", my_rank, world_size);
-        pprint_matrix(recv_matrix);
-        printf("\n\n");
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
-    if (my_rank==1) {
-        printf("Rank[%d]: M / world_size=%d\n", my_rank, world_size);
-        pprint_matrix(recv_matrix);
-        printf("\n\n");
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
-    if (my_rank==2) {
-        printf("Rank[%d]: M / world_size=%d\n", my_rank, world_size);
-        pprint_matrix(recv_matrix);
-        printf("\n\n");
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
-    if (my_rank==3) {
-        printf("Rank[%d]: M / world_size=%d\n", my_rank, world_size);
-        pprint_matrix(recv_matrix);
-        printf("\n");
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
-    if (my_rank==0) {
-        printf("\n\n\n ============= send_matrix ============ :\n");
-        pprint_matrix(send_matrix);
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Bcast(vector->data, vector->numRows, SELECT_DATA_TYPE_MPI, 0, MPI_COMM_WORLD);
+    serial_matvecmul(recv_matrix, vector, result_vector);
+    vector_norm_contributions[my_rank] = vector_sum_component_squares(result_vector);
 
-    // char lc[12];
-    // sprintf(lc, "rank[%d][", my_rank);
-    // printf("\n\n");
-    // printf("\n\n");
+    MPI_Allgather((vector_norm_contributions + my_rank),
+                  1,
+                  SELECT_DATA_TYPE_MPI,
+                  vector_norm_contributions,
+                  world_size,
+                  SELECT_DATA_TYPE_MPI,
+                  MPI_COMM_WORLD);
 
-    done:
+    DATA_TYPE total_squares = total_sum_squares(vector_norm_contributions, world_size);
+    printf("Rank[%d]: total_squares=%d\n", my_rank, total_squares);
+    
+
+    // MPI_Allgather(result_vector->data,
+    //               result_vector->numRows,
+    //               SELECT_DATA_TYPE_MPI,
+    //               vector->data,
+    //               vector->numRows,
+    //               SELECT_DATA_TYPE_MPI,
+    //               MPI_COMM_WORLD);
+
+    // printf("Rank[%d]: result_vector_length=%d ... result sum squares=%d\n",
+    //        my_rank,
+    //        result_vector->numRows,
+    //        vector_norm_contributions[my_rank]);
+
+    // MPI_Barrier(MPI_COMM_WORLD);
+    //  if (my_rank == 0) {
+    //      printf("Rank[%d]: M / world_size=%d\n", my_rank, world_size);
+    //      pprint_matrix(vector);
+    //      printf("\n\n");
+    //  }
+    //  MPI_Barrier(MPI_COMM_WORLD);
+    //  if (my_rank == 1) {
+    //      printf("Rank[%d]: M / world_size=%d\n", my_rank, world_size);
+    //      pprint_matrix(vector);
+    //      printf("\n\n");
+    //  }
+    //  MPI_Barrier(MPI_COMM_WORLD);
+    //  if (my_rank == 2) {
+    //      printf("Rank[%d]: M / world_size=%d\n", my_rank, world_size);
+    //      pprint_matrix(vector);
+    //      printf("\n\n");
+    //  }
+    //  MPI_Barrier(MPI_COMM_WORLD);
+    //  if (my_rank == 3) {
+    //      printf("Rank[%d]: M / world_size=%d\n", my_rank, world_size);
+    //      pprint_matrix(recv_matrix);
+    //      printf("\n");
+    //  }
+
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // if (my_rank == 0) {
+    //     printf("\n\n\n ============= send_matrix ============ :\n");
+    //     pprint_matrix(send_matrix);
+    // }
+
+done:
     MPI_Finalize();
+
+    // matrix_destroy(vector);
+    // matrix_destroy(recv_matrix);
+    if (my_rank == 0) {
+        matrix_destroy(send_matrix);
+    }
 
     return 0;
 }

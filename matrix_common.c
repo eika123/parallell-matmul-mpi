@@ -15,8 +15,9 @@ matrix_t *matrix_factory(int numRows, int numCols)
     matrix->data = calloc((size_t)numRows * (size_t)numCols, sizeof(DATA_TYPE));
     if (!matrix->data)
     {
-        fprintf(stderr, "calloc failed\n");
+        fprintf(stderr, "calloc failed to allocate matrix->data\n");
         free(matrix);
+        exit(1);
     }
     return matrix;
 }

@@ -31,7 +31,7 @@ struct matrix
     DATA_TYPE *data;
 } typedef matrix_t;
 
-#define get_val(matrix, row, col) ((matrix->data)[row * (matrix->numCols) + col])
+#define get_val(matrix, row, col) ((DATA_TYPE) (matrix->data)[row * (matrix->numCols) + col])
 #define set_val(matrix, row, col, value) ((matrix->data)[row * (matrix->numCols) + col] = (DATA_TYPE)value)
 
 
